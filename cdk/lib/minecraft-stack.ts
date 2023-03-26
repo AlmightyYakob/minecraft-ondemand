@@ -3,6 +3,7 @@ import {
   Stack,
   StackProps,
   aws_ec2 as ec2,
+  aws_autoscaling as autoscaling,
   aws_efs as efs,
   aws_iam as iam,
   aws_ecs as ecs,
@@ -31,9 +32,9 @@ export class MinecraftStack extends Stack {
     const vpc = config.vpcId
       ? ec2.Vpc.fromLookup(this, 'Vpc', { vpcId: config.vpcId })
       : new ec2.Vpc(this, 'Vpc', {
-          maxAzs: 3,
-          natGateways: 0,
-        });
+        maxAzs: 3,
+        natGateways: 0,
+      });
 
     const fileSystem = new efs.FileSystem(this, 'FileSystem', {
       vpc,
@@ -85,31 +86,78 @@ export class MinecraftStack extends Stack {
       clusterName: constants.CLUSTER_NAME,
       vpc,
       containerInsights: true, // TODO: Add config for container insights
-      enableFargateCapacityProviders: true,
+      // enableFargateCapacityProviders: true,
     });
 
-    const taskDefinition = new ecs.FargateTaskDefinition(
-      this,
-      'TaskDefinition',
-      {
-        taskRole: ecsTaskRole,
-        memoryLimitMiB: config.taskMemory,
-        cpu: config.taskCpu,
-        volumes: [
-          {
-            name: constants.ECS_VOLUME_NAME,
-            efsVolumeConfiguration: {
-              fileSystemId: fileSystem.fileSystemId,
-              transitEncryption: 'ENABLED',
-              authorizationConfig: {
-                accessPointId: accessPoint.accessPointId,
-                iam: 'ENABLED',
-              },
+    // const taskDefinition = new ecs.FargateTaskDefinition(
+    //   this,
+    //   'TaskDefinition',
+    //   {
+    //     taskRole: ecsTaskRole,
+    //     memoryLimitMiB: config.taskMemory,
+    //     cpu: config.taskCpu,
+    //     volumes: [
+    //       {
+    //         name: constants.ECS_VOLUME_NAME,
+    //         efsVolumeConfiguration: {
+    //           fileSystemId: fileSystem.fileSystemId,
+    //           transitEncryption: 'ENABLED',
+    //           authorizationConfig: {
+    //             accessPointId: accessPoint.accessPointId,
+    //             iam: 'ENABLED',
+    //           },
+    //         },
+    //       },
+    //     ],
+    //   }
+    // );
+
+    const taskDefinition = new ecs.Ec2TaskDefinition(this,
+      'TaskDefinition', {
+      taskRole: ecsTaskRole,
+      volumes: [
+        {
+          name: constants.ECS_VOLUME_NAME,
+          efsVolumeConfiguration: {
+            fileSystemId: fileSystem.fileSystemId,
+            transitEncryption: 'ENABLED',
+            authorizationConfig: {
+              accessPointId: accessPoint.accessPointId,
+              iam: 'ENABLED',
             },
           },
-        ],
-      }
-    );
+        },
+      ]
+    })
+
+    const ec2Image = ec2.MachineImage.latestAmazonLinux({
+      cpuType: ec2.AmazonLinuxCpuType.X86_64,
+      generation: ec2.AmazonLinuxGeneration.AMAZON_LINUX_2,
+    });
+
+    const ecsLaunchTemplate = new ec2.LaunchTemplate(this, 'ECSLaunchTemplate', {
+      // m5zn.large has the resources we need, with cheap spot pricing.
+      // If spot instances become too unreliable, m5.large is a good on demand option
+      instanceType: new ec2.InstanceType('m5zn.large'),
+      machineImage: ec2Image,
+      userData: ec2.UserData.custom([
+        '#!/bin/bash',
+        `echo ECS_CLUSTER=${cluster.clusterName} >> /etc/ecs/ecs.config`
+      ].join('\n')),
+    });
+
+    const ecsAutoScalingGroup = new autoscaling.CfnAutoScalingGroup(this, 'ECSAutoScalingGroup', {
+      // m5zn.large has the resources we need, with cheap spot pricing. If spot instances become too unreliable, m5.large is a good on demand option
+      minSize: '0',
+      maxSize: '1',
+      desiredCapacity: '0',
+      desiredCapacityType: 'units',
+      launchTemplate: {
+        launchTemplateId: ecsLaunchTemplate.launchTemplateId,
+        version: ecsLaunchTemplate.versionNumber,
+      },
+    })
+
 
     const minecraftServerConfig = getMinecraftServerConfig(
       config.minecraftEdition
@@ -133,9 +181,9 @@ export class MinecraftStack extends Stack {
         taskDefinition,
         logging: config.debug
           ? new ecs.AwsLogDriver({
-              logRetention: logs.RetentionDays.THREE_DAYS,
-              streamPrefix: constants.MC_SERVER_CONTAINER_NAME,
-            })
+            logRetention: logs.RetentionDays.THREE_DAYS,
+            streamPrefix: constants.MC_SERVER_CONTAINER_NAME,
+          })
           : undefined,
       }
     );
@@ -160,22 +208,42 @@ export class MinecraftStack extends Stack {
       minecraftServerConfig.ingressRulePort
     );
 
-    const minecraftServerService = new ecs.FargateService(
+    // const minecraftServerService = new ecs.FargateService(
+    //   this,
+    //   'FargateService',
+    //   {
+    //     cluster,
+    //     capacityProviderStrategies: [
+    //       {
+    //         capacityProvider: config.useFargateSpot
+    //           ? 'FARGATE_SPOT'
+    //           : 'FARGATE',
+    //         weight: 1,
+    //         base: 1,
+    //       },
+    //     ],
+    //     taskDefinition: taskDefinition,
+    //     platformVersion: ecs.FargatePlatformVersion.LATEST,
+    //     serviceName: constants.SERVICE_NAME,
+    //     desiredCount: 0,
+    //     assignPublicIp: true,
+    //     securityGroups: [serviceSecurityGroup],
+    //   }
+    // );
+
+    const minecraftServerService = new ecs.Ec2Service(
       this,
-      'FargateService',
+      'Ec2Service',
       {
         cluster,
         capacityProviderStrategies: [
           {
-            capacityProvider: config.useFargateSpot
-              ? 'FARGATE_SPOT'
-              : 'FARGATE',
+            capacityProvider: 'EC2',
             weight: 1,
             base: 1,
           },
         ],
         taskDefinition: taskDefinition,
-        platformVersion: ecs.FargatePlatformVersion.LATEST,
         serviceName: constants.SERVICE_NAME,
         desiredCount: 0,
         assignPublicIp: true,
@@ -225,11 +293,11 @@ export class MinecraftStack extends Stack {
         containerName: constants.WATCHDOG_SERVER_CONTAINER_NAME,
         image: isDockerInstalled()
           ? ecs.ContainerImage.fromAsset(
-              path.resolve(__dirname, '../../minecraft-ecsfargate-watchdog/')
-            )
+            path.resolve(__dirname, '../../minecraft-ecsfargate-watchdog/')
+          )
           : ecs.ContainerImage.fromRegistry(
-              'doctorray/minecraft-ecsfargate-watchdog'
-            ),
+            'doctorray/minecraft-ecsfargate-watchdog'
+          ),
         essential: true,
         taskDefinition: taskDefinition,
         environment: {
@@ -247,9 +315,9 @@ export class MinecraftStack extends Stack {
         },
         logging: config.debug
           ? new ecs.AwsLogDriver({
-              logRetention: logs.RetentionDays.THREE_DAYS,
-              streamPrefix: constants.WATCHDOG_SERVER_CONTAINER_NAME,
-            })
+            logRetention: logs.RetentionDays.THREE_DAYS,
+            streamPrefix: constants.WATCHDOG_SERVER_CONTAINER_NAME,
+          })
           : undefined,
       }
     );
