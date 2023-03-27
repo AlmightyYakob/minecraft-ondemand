@@ -89,28 +89,36 @@ export class MinecraftStack extends Stack {
       // enableFargateCapacityProviders: true,
     });
 
-    // const taskDefinition = new ecs.FargateTaskDefinition(
-    //   this,
-    //   'TaskDefinition',
-    //   {
-    //     taskRole: ecsTaskRole,
-    //     memoryLimitMiB: config.taskMemory,
-    //     cpu: config.taskCpu,
-    //     volumes: [
-    //       {
-    //         name: constants.ECS_VOLUME_NAME,
-    //         efsVolumeConfiguration: {
-    //           fileSystemId: fileSystem.fileSystemId,
-    //           transitEncryption: 'ENABLED',
-    //           authorizationConfig: {
-    //             accessPointId: accessPoint.accessPointId,
-    //             iam: 'ENABLED',
-    //           },
-    //         },
-    //       },
-    //     ],
-    //   }
-    // );
+    const ecsLaunchTemplate = new ec2.LaunchTemplate(this, 'ECSLaunchTemplate', {
+      // m5zn.large has the resources we need, with cheap spot pricing.
+      // If spot instances become too unreliable, m5.large is a good on demand option
+      instanceType: new ec2.InstanceType('m5zn.large'),
+      machineImage: ec2.MachineImage.latestAmazonLinux({
+        cpuType: ec2.AmazonLinuxCpuType.X86_64,
+        generation: ec2.AmazonLinuxGeneration.AMAZON_LINUX_2,
+      }),
+      userData: ec2.UserData.custom([
+        '#!/bin/bash',
+        `echo ECS_CLUSTER=${cluster.clusterName} >> /etc/ecs/ecs.config`
+      ].join('\n')),
+
+      // This might be the instance profile? I.e. the role the instance uses when spun up
+      role: ecsTaskRole,
+    });
+
+    const ecsAutoScalingGroup = new autoscaling.AutoScalingGroup(this, 'ECSAutoScalingGroup', {
+      minCapacity: 0,
+      maxCapacity: 1,
+      desiredCapacity: 0,
+      launchTemplate: ecsLaunchTemplate,
+      vpc,
+    });
+
+    const asgCapacityProvider = new ecs.AsgCapacityProvider(this, 'ASGCapacityProvider', {
+      autoScalingGroup: ecsAutoScalingGroup,
+
+    });
+    cluster.addAsgCapacityProvider(asgCapacityProvider);
 
     const taskDefinition = new ecs.Ec2TaskDefinition(this,
       'TaskDefinition', {
@@ -129,35 +137,6 @@ export class MinecraftStack extends Stack {
         },
       ]
     })
-
-    const ec2Image = ec2.MachineImage.latestAmazonLinux({
-      cpuType: ec2.AmazonLinuxCpuType.X86_64,
-      generation: ec2.AmazonLinuxGeneration.AMAZON_LINUX_2,
-    });
-
-    const ecsLaunchTemplate = new ec2.LaunchTemplate(this, 'ECSLaunchTemplate', {
-      // m5zn.large has the resources we need, with cheap spot pricing.
-      // If spot instances become too unreliable, m5.large is a good on demand option
-      instanceType: new ec2.InstanceType('m5zn.large'),
-      machineImage: ec2Image,
-      userData: ec2.UserData.custom([
-        '#!/bin/bash',
-        `echo ECS_CLUSTER=${cluster.clusterName} >> /etc/ecs/ecs.config`
-      ].join('\n')),
-    });
-
-    const ecsAutoScalingGroup = new autoscaling.CfnAutoScalingGroup(this, 'ECSAutoScalingGroup', {
-      // m5zn.large has the resources we need, with cheap spot pricing. If spot instances become too unreliable, m5.large is a good on demand option
-      minSize: '0',
-      maxSize: '1',
-      desiredCapacity: '0',
-      desiredCapacityType: 'units',
-      launchTemplate: {
-        launchTemplateId: ecsLaunchTemplate.launchTemplateId,
-        version: ecsLaunchTemplate.versionNumber,
-      },
-    })
-
 
     const minecraftServerConfig = getMinecraftServerConfig(
       config.minecraftEdition
@@ -178,6 +157,7 @@ export class MinecraftStack extends Stack {
         ],
         environment: config.minecraftImageEnv,
         essential: false,
+        memoryReservationMiB: 6144, // 6GB
         taskDefinition,
         logging: config.debug
           ? new ecs.AwsLogDriver({
@@ -246,8 +226,8 @@ export class MinecraftStack extends Stack {
         taskDefinition: taskDefinition,
         serviceName: constants.SERVICE_NAME,
         desiredCount: 0,
-        assignPublicIp: true,
-        securityGroups: [serviceSecurityGroup],
+        // assignPublicIp: true,
+        // securityGroups: [serviceSecurityGroup],
       }
     );
 
@@ -300,6 +280,7 @@ export class MinecraftStack extends Stack {
           ),
         essential: true,
         taskDefinition: taskDefinition,
+        memoryReservationMiB: 512,
         environment: {
           CLUSTER: constants.CLUSTER_NAME,
           SERVICE: constants.SERVICE_NAME,

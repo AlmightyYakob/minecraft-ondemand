@@ -1,6 +1,6 @@
 export const constants = {
-  CLUSTER_NAME: 'minecraft',
-  SERVICE_NAME: 'minecraft-server',
+  CLUSTER_NAME: 'minecraft-ec2',
+  SERVICE_NAME: 'minecraft-ec2-server',
   MC_SERVER_CONTAINER_NAME: 'minecraft-server',
   WATCHDOG_SERVER_CONTAINER_NAME: 'minecraft-ecsfargate-watchdog',
   DOMAIN_STACK_REGION: 'us-east-1',
