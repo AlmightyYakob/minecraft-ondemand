@@ -15,7 +15,7 @@ if (!config.domainName) {
     `.env.sample` to `.env` and add your domain name.');
 }
 
-const domainStack = new DomainStack(app, 'minecraft-domain-stack', {
+const domainStack = new DomainStack(app, 'minecraft-ec2-domain-stack', {
   env: {
     /**
      * Because we are relying on Route 53+CloudWatch to invoke the Lambda function,
@@ -28,7 +28,7 @@ const domainStack = new DomainStack(app, 'minecraft-domain-stack', {
   config,
 });
 
-const minecraftStack = new MinecraftStack(app, 'minecraft-server-stack', {
+const minecraftStack = new MinecraftStack(app, 'minecraft-ec2-server-stack', {
   env: {
     region: config.serverRegion,
     /* Account must be specified to allow for VPC lookup */
