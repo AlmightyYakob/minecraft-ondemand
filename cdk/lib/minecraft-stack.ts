@@ -97,6 +97,9 @@ export class MinecraftStack extends Stack {
         cpuType: ec2.AmazonLinuxCpuType.X86_64,
         generation: ec2.AmazonLinuxGeneration.AMAZON_LINUX_2,
       }),
+      spotOptions: {
+        requestType: ec2.SpotRequestType.ONE_TIME,
+      },
       userData: ec2.UserData.custom([
         '#!/bin/bash',
         `echo ECS_CLUSTER=${cluster.clusterName} >> /etc/ecs/ecs.config`
@@ -116,7 +119,6 @@ export class MinecraftStack extends Stack {
 
     const asgCapacityProvider = new ecs.AsgCapacityProvider(this, 'ASGCapacityProvider', {
       autoScalingGroup: ecsAutoScalingGroup,
-
     });
     cluster.addAsgCapacityProvider(asgCapacityProvider);
 
@@ -218,7 +220,7 @@ export class MinecraftStack extends Stack {
         cluster,
         capacityProviderStrategies: [
           {
-            capacityProvider: 'EC2',
+            capacityProvider: asgCapacityProvider.capacityProviderName,
             weight: 1,
             base: 1,
           },

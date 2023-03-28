@@ -3,7 +3,7 @@ import * as path from 'path';
 import { MinecraftImageEnv, StackConfig } from './types';
 import { stringAsBoolean } from './util';
 
-dotenv.config({ path: path.resolve(__dirname, '../.env') });
+dotenv.config({ path: path.resolve(__dirname, '../.env.ec2') });
 
 const resolveMinecraftEnvVars = (json = ''): MinecraftImageEnv => {
   const defaults = { EULA: 'TRUE' };
