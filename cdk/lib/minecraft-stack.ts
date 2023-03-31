@@ -35,6 +35,14 @@ export class MinecraftStack extends Stack {
         maxAzs: 3,
         natGateways: 0,
       });
+    const serviceSecurityGroup = new ec2.SecurityGroup(
+      this,
+      'ServiceSecurityGroup',
+      {
+        vpc,
+        description: 'Security group for Minecraft on-demand',
+      }
+    );
 
     const fileSystem = new efs.FileSystem(this, 'FileSystem', {
       vpc,
@@ -89,6 +97,8 @@ export class MinecraftStack extends Stack {
       // enableFargateCapacityProviders: true,
     });
 
+
+    const ecsInstanceRole = iam.Role.fromRoleName(this, 'ECSInstanceRole', 'ecsInstanceRole');
     const ecsLaunchTemplate = new ec2.LaunchTemplate(this, 'ECSLaunchTemplate', {
       // m5zn.large has the resources we need, with cheap spot pricing.
       // If spot instances become too unreliable, m5.large is a good on demand option
@@ -100,13 +110,15 @@ export class MinecraftStack extends Stack {
       spotOptions: {
         requestType: ec2.SpotRequestType.ONE_TIME,
       },
+      securityGroup: serviceSecurityGroup,
       userData: ec2.UserData.custom([
         '#!/bin/bash',
         `echo ECS_CLUSTER=${cluster.clusterName} >> /etc/ecs/ecs.config`
       ].join('\n')),
 
-      // This might be the instance profile? I.e. the role the instance uses when spun up
-      role: ecsTaskRole,
+      // This (I THINK) must be the ecsInstanceRole, so that the spun up EC2 instance can join the cluster
+      // https://docs.aws.amazon.com/AmazonECS/latest/developerguide/instance_IAM_role.html
+      role: ecsInstanceRole,
     });
 
     const ecsAutoScalingGroup = new autoscaling.AutoScalingGroup(this, 'ECSAutoScalingGroup', {
@@ -175,15 +187,6 @@ export class MinecraftStack extends Stack {
       sourceVolume: constants.ECS_VOLUME_NAME,
       readOnly: false,
     });
-
-    const serviceSecurityGroup = new ec2.SecurityGroup(
-      this,
-      'ServiceSecurityGroup',
-      {
-        vpc,
-        description: 'Security group for Minecraft on-demand',
-      }
-    );
 
     serviceSecurityGroup.addIngressRule(
       ec2.Peer.anyIpv4(),
